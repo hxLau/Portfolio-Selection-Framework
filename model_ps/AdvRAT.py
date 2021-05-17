@@ -44,8 +44,6 @@ class EncoderDecoder(nn.Module):
 
 
     def forward(self, price_series, local_price_context, previous_w, price_series_mask, local_price_mask, padding_price, adv=False):
-
-        price_series = price_series/price_series[0:1, :, -1:, :]
         price_series = price_series.permute(
             3, 1, 2, 0)  
 

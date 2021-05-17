@@ -7,22 +7,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import copy
-import time
 from torch.autograd import Variable
-import time
-from datetime import datetime
 import os
 import model_ps.AdvRAT as AdvRAT
-from data import DataMatrices
+from DataMatrix import DataMatrices
 from loss import SimpleLossCompute, SimpleLossCompute_tst, Batch_Loss, Test_Loss, SimpleAdvLossCompute, CRRA_Loss
 from util.GaussianNoise import *
+from util.tool import *
 
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
-
-
-def parse_time(time_string):
-    return time.mktime(datetime.strptime(time_string, "%Y/%m/%d").timetuple())
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 
 def get_parameter():
@@ -47,8 +40,6 @@ def get_parameter():
     parser.add_argument('--weight_decay', type=float, default=5e-8)
     parser.add_argument('--daily_interest_rate', type=float, default=0.001)
 
-    parser.add_argument('--start', type=str, default="2016/01/01")
-    parser.add_argument('--end', type=str, default="2018/01/01")
     parser.add_argument('--model_name', type=str, default=None)
     parser.add_argument('--log_dir', type=str, default='./log')
     parser.add_argument('--model_dir', type=str, default='./checkpoint')
@@ -136,8 +127,8 @@ def make_std_mask(local_price_context, batch_size):
 
 def test_batch(DM, x_window_size, model, evaluate_loss_compute, local_context_length):
     tst_batch = DM.get_test_set()
-    tst_batch_input = tst_batch["X"]  
-    tst_batch_y = tst_batch["y"]
+    tst_batch_input = tst_batch["data_ps"]  
+    tst_batch_y = tst_batch["relative_price"]
     tst_batch_last_w = tst_batch["last_w"]
     tst_batch_w = tst_batch["setw"]
 
@@ -150,19 +141,19 @@ def test_batch(DM, x_window_size, model, evaluate_loss_compute, local_context_le
     tst_src_mask = (torch.ones(tst_src.size()[1], 1, x_window_size) == 1)
     tst_currt_price = tst_src.permute(
         (3, 1, 2, 0))  
-#############################################################################
+
     if(local_context_length > 1):
         padding_price = tst_currt_price[:,
                                         :, -(local_context_length)*2+1:-1, :]
     else:
         padding_price = None
-#########################################################################
+
 
     tst_currt_price = tst_currt_price[:, :, -1:, :]
     tst_trg_mask = make_std_mask(tst_currt_price, tst_src.size()[1])
     tst_batch_y = tst_batch_y.transpose((0, 2, 1))  
     tst_trg_y = torch.tensor(tst_batch_y, dtype=torch.float).cuda()
-###########################################################################################################
+
     tst_out, input_feature, encoder_feature, decoder_feature = model.forward(tst_src, tst_currt_price, tst_previous_w,  
                             tst_src_mask, tst_trg_mask, padding_price)
 
@@ -171,10 +162,9 @@ def test_batch(DM, x_window_size, model, evaluate_loss_compute, local_context_le
 
 
 def test_online(DM, x_window_size, model, evaluate_loss_compute, local_context_length):
-    tst_batch = DM.get_test_set_online(
-        DM._test_ind[0], DM._test_ind[-1], x_window_size)
-    tst_batch_input = tst_batch["X"]
-    tst_batch_y = tst_batch["y"]
+    tst_batch = DM.get_test_set_online()
+    tst_batch_input = tst_batch["data_ps"]
+    tst_batch_y = tst_batch["relative_price"]
     tst_batch_last_w = tst_batch["last_w"]
     tst_batch_w = tst_batch["setw"]
 
@@ -185,14 +175,14 @@ def test_online(DM, x_window_size, model, evaluate_loss_compute, local_context_l
     tst_batch_input = tst_batch_input.transpose((0, 1, 3, 2))
 
     long_term_tst_src = torch.tensor(tst_batch_input, dtype=torch.float).cuda()
-#########################################################################################
+
     tst_src_mask = (torch.ones(long_term_tst_src.size()
                                [1], 1, x_window_size) == 1)
 
     long_term_tst_currt_price = long_term_tst_src.permute((3, 1, 2, 0))
     long_term_tst_currt_price = long_term_tst_currt_price[:,
                                                           :, x_window_size-1:, :]
-###############################################################################################
+
     tst_trg_mask = make_std_mask(
         long_term_tst_currt_price[:, :, 0:1, :], long_term_tst_src.size()[1])
 
@@ -244,7 +234,7 @@ def test_net(DM, total_step, output_step, x_window_size, local_context_length, m
             print("Epoch Step: %d| Loss per batch: %f| Portfolio_Value: %f | batch per Sec: %f \r\n" %
                   (i, loss.item(), portfolio_value.item(), output_step / elapsed))
             start = time.time()
-#########################################################tst########################################################
+
         tst_total_loss = 0
         with torch.no_grad():
             if(i % output_step == 0 and evaluate):
@@ -269,11 +259,11 @@ def test_net(DM, total_step, output_step, x_window_size, local_context_length, m
 
 def train_one_step(DM, x_window_size, model, loss_compute, local_context_length, opt, adv=True, adv_local=1, gaussion_noise=False):
     batch = DM.next_batch()
-    batch_input = batch["X"]  
-    batch_y = batch["y"]  
+    batch_input = batch["data_ps"]  
+    batch_y = batch["relative_price"]  
     batch_last_w = batch["last_w"]  
     batch_w = batch["setw"]
-#############################################################################
+
     if gaussion_noise:
         np_input = np.array(batch_input)
         batch_input = add_noise(np_input)
@@ -351,7 +341,7 @@ def train_net(DM, total_step, output_step, x_window_size, local_context_length, 
             print("Epoch Step: %d| Loss per batch: %f| Portfolio_Value: %f | batch per Sec: %f \r\n" %
                   (i, loss.item(), portfolio_value.item(), output_step / elapsed))
             start = time.time()
-#########################################################tst########################################################
+
         tst_total_loss = 0
         with torch.no_grad():
             if(i % output_step == 0 and evaluate):
@@ -374,8 +364,6 @@ def train_net(DM, total_step, output_step, x_window_size, local_context_length, 
 
 def main():
     FLAGS = get_parameter()
-    start = parse_time(FLAGS.start)
-    end = parse_time(FLAGS.end)
     lr_model_sz = 5120
     factor = FLAGS.learning_rate 
     warmup = 0  
@@ -399,21 +387,11 @@ def main():
 
     csv_name = get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gamma)
 
-    DM = DataMatrices(start=start, end=end,
-                    market="poloniex",
-                    feature_number=FLAGS.feature_number,
-                    window_size=FLAGS.x_window_size,
-                    online=False,
-                    period=1800,
-                    coin_filter=FLAGS.coin_num,
-                    is_permed=False,
-                    buffer_bias_ratio=5e-5,
-                    batch_size=FLAGS.batch_size,  
-                    volume_average_days=30,
-                    test_portion=FLAGS.test_portion,  
-                    portion_reversed=False)
+    DM = DataMatrices(batch_size=batch_size, window_size=x_window_size, coin_number=coin_num, feature_number=feature_number,
+                      test_portion=0.15,trend_size=1, portion_reversed=False, is_permed=True,
+                      buffer_bias_ratio=5e-5, market='CC1', picture_bool=False, predict_bool=False)
 
-    model = AdvRAT.make_model(batch_size, coin_num, x_window_size, feature_number,
+    model = AdvRAT.make_model(batch_size, coin_num, x_window_size, feature_number-1,
                         N=1, d_model_Encoder=FLAGS.multihead_num*model_dim,
                         d_model_Decoder=FLAGS.multihead_num*model_dim,
                         d_ff_Encoder=FLAGS.multihead_num*model_dim,
@@ -467,6 +445,7 @@ def main():
     else:
         dataframe = new_data_frame
     dataframe.to_csv(csv_dir)
+
 
 
 if __name__ == '__main__':

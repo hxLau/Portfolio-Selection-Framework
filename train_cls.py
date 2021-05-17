@@ -18,7 +18,7 @@ from model_cls.LSTMTagger import LSTMTagger
 # from loss import SimpleLossCompute, SimpleLossCompute_tst, Batch_Loss, Test_Loss
 torch.set_printoptions(profile="full")
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 
 def train_net(total_step, model, loss_function, optimizer, DM, model_dir, model_index):

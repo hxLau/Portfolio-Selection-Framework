@@ -30,28 +30,28 @@ def get_type_list(feature_number):
 class HistoryManager:
     def __init__(self, coin_number):
         self._coin_number = coin_number
-        self.market_list = ['ChinaA', 'AMEX', 'NYSE', 'NASDAQ']
+        self.market_list = ['ChinaA', 'AMEX', 'NYSE', 'NASDAQ', 'CC1', 'CC2']
 
     def get_global_panel(self, feature_list=['CLOSE', 'HIGH', 'LOW', 'OPEN', 'VOLUME'], market='ChinaA'):
         if market not in self.market_list:
             raise ValueError('金融市场数据集不存在')
 
-        root_path = './database/' + market
-        file_list = [f for f in os.listdir(root_path) if os.path.isfile(os.path.join(root_path, f))]
-
-        if self._coin_number > len(file_list):
-            raise ValueError('设置提取的资产数量大于可提取范围')
-
-        print('--market: ' + market + '  --coin_number: ' + str(self._coin_number) + 
-            '  --feature_number: ' + str(len(feature_list)))
-
-        coin_list = [i[:-4] for i in file_list][:self._coin_number]
-        date_list = []
-        data_np = []
-
-        if os.path.exists('./database/pkl/' + market + str(self._coin_number) + '.pkl'):
-            panel = pd.read_pickle('./database/pkl/' + market + str(self._coin_number) + '.pkl')
+        if os.path.exists('./database/pkl/' + market + '_' + str(self._coin_number) + '.pkl'):
+            panel = pd.read_pickle('./database/pkl/' + market + '_' + str(self._coin_number) + '.pkl')
         else:
+            root_path = './database/' + market
+            file_list = [f for f in os.listdir(root_path) if os.path.isfile(os.path.join(root_path, f))]
+
+            if self._coin_number > len(file_list):
+                raise ValueError('设置提取的资产数量大于可提取范围')
+
+            print('--market: ' + market + '  --coin_number: ' + str(self._coin_number) + 
+                '  --feature_number: ' + str(len(feature_list)))
+
+            coin_list = [i[:-4] for i in file_list][:self._coin_number]
+            date_list = []
+            data_np = []
+            
             for i in range(len(file_list)):
                 if i == self._coin_number:
                     break
@@ -70,7 +70,7 @@ class HistoryManager:
                         panel.loc[feature_list[j], coin_list[i], date_list[k]] = data_np[i][k][j]
 
             print('DataFrame finish!')
-            f = open('./database/pkl/' + market + str(self._coin_number) + '.pkl', 'wb')
+            f = open('./database/pkl/' + market + '_' + str(self._coin_number) + '.pkl', 'wb')
             panel.to_pickle(f)
             f.close
         # [features, coins, dates]
@@ -94,7 +94,7 @@ class DataMatrices:
         self.__features = get_type_list(self.feature_number)
         self.__history_manager = HistoryManager(coin_number=self.__coin_no)
         # [feature, coin, date]
-        self.__global_data = self.__history_manager.get_global_panel(feature_list=self.__features, market='ChinaA')
+        self.__global_data = self.__history_manager.get_global_panel(feature_list=self.__features, market=market)
         # major: coin, minor: date
         self.__PVM = pd.DataFrame(np.ones((len(list(self.__global_data.minor_axis)), self.__coin_no))/self.__coin_no,
                                  index=list(self.__global_data.minor_axis),
@@ -118,6 +118,9 @@ class DataMatrices:
 
     def get_test_set(self):
         return self.__pack_samples(self._test_ind)
+    
+    def get_test_set_online(self):
+        return self.__pack_samples_test_online(self._test_ind[0], self._test_ind[-1], self.__window_size)
 
     def next_batch(self):
         batch = self.__pack_samples(
@@ -138,11 +141,12 @@ class DataMatrices:
 
         # 用于投资组合选择的4个价格特征, [batch, feature, asset, window]
         data_ps = M[:, :-1, :, self.__window_size:self.__window_size + self.__window_size]
+        data_ps = data_ps / data_ps[:, 0:1, :, -1:]
         # 投资组合选择的最终相对价格, [batch, feature, asset]
         relative_price = M[:, :-1, :, self.__window_size+self.__window_size] / M[:, 0, None, :, self.__window_size+self.__window_size-1] 
 
         # 序列和图片数据做趋势预测
-        data_cls = data_ps / data_ps[:, :, :, -1:]
+        data_cls = data_ps / data_ps[:, 0:1, :, -1:]
 
         if self.picture_bool:
             price_picture = self.get_price_picture(M)
@@ -161,37 +165,26 @@ class DataMatrices:
 
         return {"data_ps": data_ps, "relative_price": relative_price, "last_w": last_w, "setw": setw,
                 "data_cls": data_cls, "price_picture": price_picture, "trend": trend, "predict_label": predict_label}
+    
+    def __pack_samples_test_online(self, ind_start, ind_end, x_window_size):
+        last_w = self.__PVM.values[ind_start-1:ind_start, :]
 
-    def get_price_picture(self, M):
-        x = M[:, :-1, :, self.__window_size:-self.__trend_size]
-        volume = M[:, -1:, :, self.__window_size:-self.__trend_size]
-
-        MA = [np.mean(M[:, :1, :, a:a+self.__window_size], axis=3) for a in range(self.__window_size)]
-        MA = np.array(MA)
-        MA = MA.transpose((1, 2, 3, 0))
-
-        x = np.concatenate((x, MA), axis=1)
-        x = np.concatenate((x, volume), axis=1)
-        x = x.transpose((0, 2, 3, 1))
-
-        data = []
-
-        for i in range(x.shape[0]):
-            item = []
-            for j in range(x.shape[1]):
-                data_item = x[i][j]
-                image = get_image_with_price(data_item)
-                tensor_value = image_loader(image)
-                list_value = tensor_value.numpy().tolist()
-                item.append(list_value)
-            data.append(item)
-        data = torch.Tensor(data)
-        return data
-
+        def setw(w):
+            self.__PVM.iloc[ind_start, :] = w
+        M = [self.get_submatrix_test_online(
+            ind_start, ind_end)]  # [1,4,11,2807]
+        M = np.array(M)
+        data_ps = M[:, :-1, :, :-self.__trend_size]
+        data_ps = data_ps / data_ps[:, 0:1, :, -1:]
+        relative_price = M[:, :-1, :, x_window_size:-(self.__trend_size-1)] / M[:, 0, None, :, x_window_size-1:-self.__trend_size]
+        return {"data_ps": data_ps, "relative_price": relative_price, "last_w": last_w, "setw": setw}
 
     def get_submatrix(self, ind):
         # [feature, coin, date]
         return self.__global_data.values[:, :, ind - self.__window_size:ind+self.__window_size + self.__trend_size]
+    
+    def get_submatrix_test_online(self, ind_start, ind_end):
+        return self.__global_data.values[:, :, ind_start:ind_end]
 
     def __divide_data(self, test_portion, portion_reversed):
         train_portion = 1 - test_portion
@@ -223,15 +216,41 @@ class DataMatrices:
 
     def __iter__(self):
         return self.get_fixlen_iter()
+    
+    def get_price_picture(self, M):
+        x = M[:, :-1, :, self.__window_size:-self.__trend_size]
+        volume = M[:, -1:, :, self.__window_size:-self.__trend_size]
+
+        MA = [np.mean(M[:, :1, :, a:a+self.__window_size], axis=3) for a in range(self.__window_size)]
+        MA = np.array(MA)
+        MA = MA.transpose((1, 2, 3, 0))
+
+        x = np.concatenate((x, MA), axis=1)
+        x = np.concatenate((x, volume), axis=1)
+        x = x.transpose((0, 2, 3, 1))
+
+        data = []
+
+        for i in range(x.shape[0]):
+            item = []
+            for j in range(x.shape[1]):
+                data_item = x[i][j]
+                image = get_image_with_price(data_item)
+                tensor_value = image_loader(image)
+                list_value = tensor_value.numpy().tolist()
+                item.append(list_value)
+            data.append(item)
+        data = torch.Tensor(data)
+        return data
 
 
 if __name__ == '__main__':
     batch_size = 32
     window_size = 30
     trend_size = 20
-    coin_number = 10
+    coin_number = 11
     feature_number = 5
-    market='ChinaA'
+    market='CC1'
     DM = DataMatrices(batch_size=batch_size, window_size=window_size, coin_number=coin_number, feature_number=feature_number,
                       test_portion=0.15,trend_size=trend_size, portion_reversed=False, is_permed=True,
                       buffer_bias_ratio=5e-5, market=market, picture_bool=False, predict_bool=False)
@@ -251,13 +270,13 @@ if __name__ == '__main__':
     #print(price_picture.shape)
     print(trend.shape)
     #print(predict_label.shape)
-    '''
-    for i in range(price_picture.shape[0]):
-        for j in range(price_picture.shape[1]):
-            image = tensor_to_PIL(price_picture[i][j])
-            plt.imshow(image)
-            plt.show()
-    '''
+    testset = DM.get_test_set_online()
+    dp = testset['data_ps']
+    rp = testset['relative_price']
+    lw = testset['last_w']
+    print(dp.shape)
+    print(rp.shape)
+    print(lw.shape)
             
 
 
