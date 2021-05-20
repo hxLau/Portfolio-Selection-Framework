@@ -139,10 +139,10 @@ class DataMatrices:
         M = [self.get_submatrix(index) for index in indexs]
         M = np.array(M)
 
-        # 用于投资组合选择的4个价格特征, [batch, feature, asset, window]
+
         data_ps = M[:, :-1, :, self.__window_size:self.__window_size + self.__window_size]
         data_ps = data_ps / data_ps[:, 0:1, :, -1:]
-        # 投资组合选择的最终相对价格, [batch, feature, asset]
+
         relative_price = M[:, :-1, :, self.__window_size+self.__window_size] / M[:, 0, None, :, self.__window_size+self.__window_size-1] 
 
         # 序列和图片数据做趋势预测
@@ -176,7 +176,10 @@ class DataMatrices:
         M = np.array(M)
         data_ps = M[:, :-1, :, :-self.__trend_size]
         data_ps = data_ps / data_ps[:, 0:1, :, -1:]
-        relative_price = M[:, :-1, :, x_window_size:-(self.__trend_size-1)] / M[:, 0, None, :, x_window_size-1:-self.__trend_size]
+        if self.__trend_size==1:
+            relative_price = M[:, :-1, :, x_window_size:] / M[:, 0, None, :, x_window_size-1:-1]
+        else:
+            relative_price = M[:, :-1, :, x_window_size:-(self.__trend_size-1)] / M[:, 0, None, :, x_window_size-1:-self.__trend_size]
         return {"data_ps": data_ps, "relative_price": relative_price, "last_w": last_w, "setw": setw}
 
     def get_submatrix(self, ind):
@@ -248,9 +251,9 @@ if __name__ == '__main__':
     batch_size = 32
     window_size = 30
     trend_size = 20
-    coin_number = 11
+    coin_number = 36
     feature_number = 5
-    market='CC1'
+    market='CC2'
     DM = DataMatrices(batch_size=batch_size, window_size=window_size, coin_number=coin_number, feature_number=feature_number,
                       test_portion=0.15,trend_size=trend_size, portion_reversed=False, is_permed=True,
                       buffer_bias_ratio=5e-5, market=market, picture_bool=False, predict_bool=False)

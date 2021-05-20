@@ -15,7 +15,7 @@ from loss import SimpleLossCompute, SimpleLossCompute_tst, Batch_Loss, Test_Loss
 from util.GaussianNoise import *
 from util.tool import *
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 def get_parameter():
@@ -45,13 +45,14 @@ def get_parameter():
     parser.add_argument('--model_dir', type=str, default='./checkpoint')
     parser.add_argument('--adv', type=int, default=1)  # 1:adversarial training   0: normal training
     parser.add_argument('--adv_local', type=int, default=1) # 1: decoder feature   2: encoder feature   3: input feature
-    parser.add_argument('--gaussion_noise', type=int, default=0)    # 1: noise    2: no noise
+    parser.add_argument('--gaussion_noise', type=int, default=0)    # 1: noise    0: no noise
     parser.add_argument('--utility_function', type=int, default=1) # 1: log utility   2: CRRA
+    parser.add_argument('--market', type=str, default='CC1')
 
     FLAGS = parser.parse_args()
     return FLAGS
 
-def get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gamma):
+def get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gamma, market):
     csv_name = ''
     if adv:
         csv_name = csv_name + 'AdvRAT'
@@ -64,8 +65,7 @@ def get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gam
     else:
         csv_name = csv_name + 'RAT'
 
-    if coin_num==11:
-        csv_name = csv_name + '_A'
+    csv_name = csv_name + '_' + market + '_' + str(coin_num)
 
     if gaussion_noise:
         csv_name = csv_name + '_NOISE'
@@ -384,12 +384,14 @@ def main():
     adv_local = FLAGS.adv_local
     gaussion_noise = FLAGS.gaussion_noise
     utility_function = FLAGS.utility_function
+    market = FLAGS.market
+    test_portion = FLAGS.test_portion
 
-    csv_name = get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gamma)
+    csv_name = get_csv_name(adv, adv_local, coin_num, gaussion_noise, utility_function, gamma, market)
 
     DM = DataMatrices(batch_size=batch_size, window_size=x_window_size, coin_number=coin_num, feature_number=feature_number,
-                      test_portion=0.15,trend_size=1, portion_reversed=False, is_permed=True,
-                      buffer_bias_ratio=5e-5, market='CC1', picture_bool=False, predict_bool=False)
+                      test_portion=test_portion, trend_size=1, portion_reversed=False, is_permed=True,
+                      buffer_bias_ratio=5e-5, market=market, picture_bool=False, predict_bool=False)
 
     model = AdvRAT.make_model(batch_size, coin_num, x_window_size, feature_number-1,
                         N=1, d_model_Encoder=FLAGS.multihead_num*model_dim,
